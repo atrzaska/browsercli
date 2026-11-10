@@ -1,0 +1,28 @@
+{
+  "name": "browsercli",
+  "version": "0.1.0",
+  "description": "Control your real Chrome browser from the command line (for humans and AI agents) via the Chrome DevTools Protocol",
+  "type": "module",
+  "bin": {
+    "browsercli": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "SKILL.md"
+  ],
+  "engines": {
+    "node": ">=22.4"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "devtools-protocol": "^0.0.1740066",
+    "typescript": "^7.0.2"
+  }
+}
