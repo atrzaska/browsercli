@@ -187,14 +187,44 @@ export const shortId = (targetId: string) => targetId.slice(0, 8);
 
 interface PersistedState {
   opts: ConnectOpts;
-  currentTargetId?: string;
+  // Selected tab per session (agent/terminal), so concurrent callers don't
+  // steal each other's tab.
+  current: Record<string, string>;
+}
+
+const MAX_SESSIONS = 100;
+
+// One caller's view of the browser: its selected tab and recording.
+export class Session {
+  readonly id: string;
+  private browser: Browser;
+
+  constructor(browser: Browser, id: string) {
+    this.browser = browser;
+    this.id = id;
+  }
+
+  get currentTargetId(): string | undefined {
+    return this.browser.currentFor(this.id);
+  }
+  set currentTargetId(targetId: string | undefined) {
+    this.browser.setCurrent(this.id, targetId);
+  }
+
+  get recorder(): Recorder | undefined {
+    return this.browser.recorders.get(this.id);
+  }
+  set recorder(r: Recorder | undefined) {
+    if (r) this.browser.recorders.set(this.id, r);
+    else this.browser.recorders.delete(this.id);
+  }
 }
 
 export class Browser {
   endpoint?: string;
-  recorder?: Recorder;
+  readonly recorders = new Map<string, Recorder>();
   // Survives daemon restarts (e.g. after an upgrade).
-  private state: PersistedState = { opts: {} };
+  private state: PersistedState = { opts: {}, current: {} };
   private conn?: CDPConnection;
   private connecting?: Promise<CDPConnection>;
   private tabs = new Map<string, Tab>();
@@ -203,7 +233,8 @@ export class Browser {
 
   constructor() {
     try {
-      this.state = { opts: {}, ...JSON.parse(readFileSync(STATE_PATH, "utf8")) };
+      const saved = JSON.parse(readFileSync(STATE_PATH, "utf8"));
+      this.state = { opts: saved.opts ?? {}, current: saved.current ?? {} };
     } catch {}
   }
 
@@ -218,16 +249,32 @@ export class Browser {
   }
   set opts(o: ConnectOpts) {
     this.state.opts = o;
+    this.state.current = {}; // tab ids belong to the previous browser
     this.save();
   }
 
-  get currentTargetId(): string | undefined {
-    return this.state.currentTargetId;
+  session(id: string): Session {
+    return new Session(this, id);
   }
-  set currentTargetId(id: string | undefined) {
-    if (this.state.currentTargetId === id) return;
-    this.state.currentTargetId = id;
+
+  currentFor(session: string): string | undefined {
+    return this.state.current[session];
+  }
+
+  setCurrent(session: string, targetId: string | undefined) {
+    if (this.state.current[session] === targetId) return;
+    delete this.state.current[session];
+    if (targetId) this.state.current[session] = targetId; // re-insert as most recent
+    const ids = Object.keys(this.state.current);
+    for (const old of ids.slice(0, Math.max(0, ids.length - MAX_SESSIONS))) delete this.state.current[old];
     this.save();
+  }
+
+  // Sessions other than `session` that have this tab selected.
+  selectedByOthers(targetId: string, session: string): string[] {
+    return Object.entries(this.state.current)
+      .filter(([s, t]) => t === targetId && s !== session)
+      .map(([s]) => s);
   }
 
   get connected() {
@@ -283,8 +330,9 @@ export class Browser {
       .map((t) => ({ targetId: t.targetId, id: shortId(t.targetId), title: t.title, url: t.url }));
   }
 
-  // Resolves --tab (full or short id, case-insensitive prefix) or the current tab.
-  async resolveTarget(idOrPrefix?: string): Promise<string> {
+  // Resolves --tab (full or short id, case-insensitive prefix) or the
+  // session's selected tab.
+  async resolveTarget(idOrPrefix: string | undefined, session: string): Promise<string> {
     const pages = await this.pages();
     if (idOrPrefix) {
       const q = idOrPrefix.toUpperCase();
@@ -293,9 +341,10 @@ export class Browser {
       if (matches.length > 1) throw new CliError("ambiguous_tab", `tab id "${idOrPrefix}" matches ${matches.length} tabs`);
       throw new CliError("tab_not_found", `no tab with id "${idOrPrefix}"; run \`browsercli tab list\``);
     }
-    if (this.currentTargetId) {
-      if (pages.some((p) => p.targetId === this.currentTargetId)) return this.currentTargetId;
-      this.currentTargetId = undefined;
+    const current = this.currentFor(session);
+    if (current) {
+      if (pages.some((p) => p.targetId === current)) return current;
+      this.setCurrent(session, undefined);
       throw new CliError(
         "no_tab_selected",
         "the selected tab was closed; run `browsercli tab list` then `browsercli tab switch ID`, or `browsercli open URL`",

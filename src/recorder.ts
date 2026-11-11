@@ -32,6 +32,7 @@ const PAGE_SCRIPT = `(() => {
   addEventListener("change", (e) => send("changed " + label(e.target)), true);
   addEventListener("submit", (e) => send("submitted " + label(e.target)), true);
   addEventListener("keydown", (e) => {
+    if (["Control", "Meta", "Alt", "Shift"].includes(e.key)) return;
     if (!["Enter", "Escape", "Tab"].includes(e.key) && !e.metaKey && !e.ctrlKey) return;
     const combo = [e.ctrlKey && "Control", e.metaKey && "Meta", e.altKey && "Alt", e.shiftKey && "Shift", e.key].filter(Boolean).join("+");
     send(who(e) + "pressed " + combo + " on " + label(e.target));

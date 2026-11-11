@@ -21,9 +21,16 @@ const chromePath =
 let home, profile, chrome, server, base;
 
 async function b(...args) {
+  return run({}, args);
+}
+
+// Runs as a specific browsercli session (like a second agent).
+const as = (session) => (...args) => run({ BROWSERCLI_SESSION: session }, args);
+
+async function run(extraEnv, args) {
   try {
     const t0 = Date.now();
-    const { stdout } = await exec("node", [cli, ...args], { env: { ...process.env, BROWSERCLI_HOME: home } });
+    const { stdout } = await exec("node", [cli, ...args], { env: { ...process.env, BROWSERCLI_HOME: home, ...extraEnv } });
     if (process.env.TIMING) console.error(`${Date.now() - t0}ms`, args.join(" "));
     return stdout.trim();
   } catch (e) {
@@ -32,8 +39,14 @@ async function b(...args) {
 }
 
 async function bFails(...args) {
+  return runFails({}, args);
+}
+
+const asFails = (session) => (...args) => runFails({ BROWSERCLI_SESSION: session }, args);
+
+async function runFails(extraEnv, args) {
   try {
-    await exec("node", [cli, ...args], { env: { ...process.env, BROWSERCLI_HOME: home } });
+    await exec("node", [cli, ...args], { env: { ...process.env, BROWSERCLI_HOME: home, ...extraEnv } });
   } catch (e) {
     return e.stderr.trim();
   }
@@ -163,6 +176,38 @@ test("record: frames, timeline, video", async () => {
   assert.ok(at(/^click /) <= at(/boom/));
   if (timeline.video) assert.ok(statSync(join(outDir, "video.mp4")).size > 1000);
   assert.match(await bFails("record", "stop"), /not_recording/);
+});
+
+test("sessions: agents don't share a selected tab", async () => {
+  const alice = as("alice");
+  const bob = as("bob");
+  const aliceTab = JSON.parse(await alice("open", `${base}/index.html`, "--json")).data.id;
+  assert.match(await asFails("bob")("snapshot"), /no_tab_selected/);
+  const bobTab = JSON.parse(await bob("open", `${base}/page2.html`, "--new", "--json")).data.id;
+  assert.notEqual(aliceTab, bobTab);
+  // Bob opening a tab doesn't move Alice.
+  assert.match(await alice("get", "--what", "title"), /Test Page/);
+  assert.match(await bob("get", "--what", "title"), /Page Two/);
+
+  // Alice's list marks Bob's tab as in use; closing it needs --force.
+  const list = JSON.parse(await alice("tab", "list", "--json")).data;
+  assert.ok(list.find((t) => t.id === aliceTab).current);
+  assert.equal(list.find((t) => t.id === bobTab).otherSessions, 1);
+  assert.match(await alice("tab", "list"), new RegExp(`~ ${bobTab}`));
+  assert.match(await asFails("alice")("tab", "close", bobTab), /tab_in_use/);
+
+  // A recording only logs its own session's commands.
+  const outDir = join(home, "rec-sessions");
+  await alice("record", "start", `${base}/index.html`);
+  await bob("eval", "1 + 1");
+  await alice("eval", "2 + 2");
+  assert.match(await asFails("bob")("daemon", "stop"), /recording_in_progress/);
+  await alice("record", "stop", "--out", outDir, "--close");
+  const events = JSON.parse(readFileSync(join(outDir, "timeline.json"), "utf8")).events.filter((e) => e.kind === "browsercli");
+  assert.deepEqual(events.map((e) => e.text), ["eval 2 + 2"]);
+
+  await bob("tab", "close", bobTab);
+  await alice("tab", "close", aliceTab);
 });
 
 test("tabs", async () => {

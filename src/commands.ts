@@ -1,7 +1,7 @@
 // Verb implementations executed inside the daemon.
 import { join } from "node:path";
 import type { Protocol } from "devtools-protocol";
-import { Browser, formatRemote, shortId, type Tab } from "./browser.js";
+import { Browser, formatRemote, shortId, type Session, type Tab } from "./browser.js";
 import type { CDPEvent } from "./cdp.js";
 import { CliError, HOME, sleep, untrusted, type Capture, type Flags } from "./common.js";
 import { pressCombo } from "./keys.js";
@@ -10,6 +10,7 @@ import { diffLines, findNodes, renderSnapshot } from "./snapshot.js";
 
 export interface Ctx {
   browser: Browser;
+  session: Session;
   args: string[];
   flags: Flags;
 }
@@ -64,7 +65,7 @@ function oneOf<T extends string>(v: string | undefined, allowed: readonly T[], n
 // ---------- tab / page helpers ----------
 
 async function getTab(c: Ctx, opts: { allowDialog?: boolean } = {}): Promise<Tab> {
-  const targetId = await c.browser.resolveTarget(str(c.flags, "tab"));
+  const targetId = await c.browser.resolveTarget(str(c.flags, "tab"), c.session.id);
   const tab = await c.browser.tab(targetId);
   if (tab.dialog && !opts.allowDialog) {
     throw new CliError(
@@ -463,11 +464,19 @@ const ACT_NOTE = (tab: Tab) => ` (tab ${shortId(tab.targetId)})`;
 const tabVerbs: Record<string, Handler> = {
   async list(c) {
     const pages = await c.browser.pages();
-    const cur = c.browser.currentTargetId;
-    const data = pages.map((p) => ({ id: p.id, targetId: p.targetId, title: p.title, url: p.url, current: p.targetId === cur }));
-    const text = pages.length
-      ? untrusted(data.map((p) => `${p.current ? "*" : " "} ${p.id}  ${JSON.stringify(p.title)}  ${truncate(p.url, 120)}`).join("\n"))
-      : "no tabs";
+    const cur = c.session.currentTargetId;
+    const data = pages.map((p) => ({
+      id: p.id,
+      targetId: p.targetId,
+      title: p.title,
+      url: p.url,
+      current: p.targetId === cur,
+      otherSessions: c.browser.selectedByOthers(p.targetId, c.session.id).length,
+    }));
+    const mark = (p: (typeof data)[number]) => (p.current ? "*" : p.otherSessions ? "~" : " ");
+    const lines = data.map((p) => `${mark(p)} ${p.id}  ${JSON.stringify(p.title)}  ${truncate(p.url, 120)}`);
+    let text = pages.length ? untrusted(lines.join("\n")) : "no tabs";
+    if (data.some((p) => p.otherSessions)) text += "\n* = your selected tab, ~ = selected by another browsercli session (another agent may be using it)";
     return { text, data };
   },
 
@@ -475,7 +484,7 @@ const tabVerbs: Record<string, Handler> = {
     const url = normalizeUrl(c.args[1] ?? "about:blank");
     const conn = await c.browser.connection();
     const { targetId } = await conn.send("Target.createTarget", { url, background: true, newWindow: bool(c.flags, "window") });
-    c.browser.currentTargetId = targetId;
+    c.session.currentTargetId = targetId;
     const tab = await c.browser.tab(targetId);
     await waitForInitialLoad(tab, url, num(c.flags, "timeout", DEFAULT_WAIT_TIMEOUT));
     const info = await pageInfo(tab);
@@ -488,21 +497,30 @@ const tabVerbs: Record<string, Handler> = {
   async switch(c) {
     const id = c.args[1] ?? str(c.flags, "tab");
     if (!id) throw new CliError("bad_args", "usage: browsercli tab switch ID");
-    const targetId = await c.browser.resolveTarget(id);
+    const targetId = await c.browser.resolveTarget(id, c.session.id);
     const conn = await c.browser.connection();
     await conn.send("Target.activateTarget", { targetId });
-    c.browser.currentTargetId = targetId;
+    c.session.currentTargetId = targetId;
     const tab = await c.browser.tab(targetId);
     const info = await pageInfo(tab);
-    return { text: `selected tab ${shortId(targetId)}: ${info.url} — ${JSON.stringify(info.title)}`, data: { id: shortId(targetId), targetId, ...info } };
+    const shared = c.browser.selectedByOthers(targetId, c.session.id).length
+      ? "\nnote: another browsercli session also has this tab selected; its actions will affect what you see"
+      : "";
+    return {
+      text: `selected tab ${shortId(targetId)}: ${info.url} — ${JSON.stringify(info.title)}${shared}`,
+      data: { id: shortId(targetId), targetId, ...info },
+    };
   },
 
   async close(c) {
-    const targetId = await c.browser.resolveTarget(c.args[1] ?? str(c.flags, "tab"));
+    const targetId = await c.browser.resolveTarget(c.args[1] ?? str(c.flags, "tab"), c.session.id);
+    if (c.browser.selectedByOthers(targetId, c.session.id).length && !bool(c.flags, "force")) {
+      throw new CliError("tab_in_use", `tab ${shortId(targetId)} is selected by another browsercli session; pass --force to close it anyway`);
+    }
     const conn = await c.browser.connection();
     await c.browser.detach(targetId);
     await conn.send("Target.closeTarget", { targetId });
-    if (c.browser.currentTargetId === targetId) c.browser.currentTargetId = undefined;
+    if (c.session.currentTargetId === targetId) c.session.currentTargetId = undefined;
     return { text: `closed tab ${shortId(targetId)}`, data: { id: shortId(targetId), targetId } };
   },
 };
@@ -513,7 +531,9 @@ export const verbs: Record<string, Handler> = {
       pid: process.pid,
       connected: c.browser.connected,
       endpoint: c.browser.endpoint,
-      currentTab: c.browser.currentTargetId ? shortId(c.browser.currentTargetId) : null,
+      session: c.session.id,
+      currentTab: c.session.currentTargetId ? shortId(c.session.currentTargetId) : null,
+      recording: !!c.session.recorder,
     };
     if (c.browser.connected) {
       const conn = await c.browser.connection();
@@ -523,6 +543,7 @@ export const verbs: Record<string, Handler> = {
     const lines = [
       `daemon pid ${data.pid}`,
       c.browser.connected ? `connected to ${data.browser} at ${data.endpoint}` : "not connected (connects on first command)",
+      `session: ${c.session.id}`,
       `selected tab: ${data.currentTab ?? "none"}`,
     ];
     return { text: lines.join("\n"), data };
@@ -535,8 +556,8 @@ export const verbs: Record<string, Handler> = {
       port: port ? Number(port) : undefined,
       userDataDir: str(c.flags, "user-data-dir"),
     };
+    // Affects every session: they all share the daemon's browser connection.
     c.browser.disconnect();
-    c.browser.currentTargetId = undefined;
     const conn = await c.browser.connection();
     const v = await conn.send("Browser.getVersion");
     return { text: `connected to ${v.product} at ${c.browser.endpoint}`, data: { browser: v.product, endpoint: c.browser.endpoint } };
@@ -557,11 +578,11 @@ export const verbs: Record<string, Handler> = {
   async open(c) {
     const url = normalizeUrl(arg(c, 0, "URL"));
     const tabFlag = str(c.flags, "tab");
-    if (bool(c.flags, "new") || (!tabFlag && !c.browser.currentTargetId)) {
+    if (bool(c.flags, "new") || (!tabFlag && !c.session.currentTargetId)) {
       return tabVerbs.new({ ...c, args: ["new", url] });
     }
     const tab = await getTab(c);
-    c.browser.currentTargetId = tab.targetId;
+    c.session.currentTargetId = tab.targetId;
     const res = await navigate(tab, url, num(c.flags, "timeout", DEFAULT_WAIT_TIMEOUT));
     return { text: `opened ${res}${ACT_NOTE(tab)}` };
   },
@@ -972,21 +993,21 @@ export const verbs: Record<string, Handler> = {
 
   async record(c) {
     const sub = c.args[0] ?? "status";
-    const rec = c.browser.recorder;
+    const rec = c.session.recorder;
     if (sub === "start") {
       if (rec) {
         throw new CliError("already_recording", `already recording tab ${shortId(rec.tab.targetId)}; run \`browsercli record stop\` first`);
       }
       let url = c.args[1] ?? str(c.flags, "url");
-      if (!url && c.browser.currentTargetId) {
-        const cur = await c.browser.tab(await c.browser.resolveTarget()).catch(() => undefined);
+      if (!url && c.session.currentTargetId) {
+        const cur = await c.browser.tab(await c.browser.resolveTarget(undefined, c.session.id)).catch(() => undefined);
         if (cur) url = (await pageInfo(cur)).url;
       }
       url = normalizeUrl(url || "about:blank");
       // A separate, visible window: Chrome doesn't paint background tabs.
       const conn = await c.browser.connection();
       const { targetId } = await conn.send("Target.createTarget", { url, newWindow: true });
-      c.browser.currentTargetId = targetId;
+      c.session.currentTargetId = targetId;
       const tab = await c.browser.tab(targetId);
       const size = str(c.flags, "size");
       if (size) {
@@ -1003,7 +1024,7 @@ export const verbs: Record<string, Handler> = {
         rawDir: join(HOME, "recordings", `.raw-${Date.now()}`),
       });
       await recorder.start();
-      c.browser.recorder = recorder;
+      c.session.recorder = recorder;
       return {
         text:
           `recording tab ${shortId(targetId)} in a new window (now selected): ${(await pageInfo(tab)).url}\n` +
@@ -1018,12 +1039,12 @@ export const verbs: Record<string, Handler> = {
       const stamp = new Date(rec.startedAt).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const dir = str(c.flags, "out") ?? join(HOME, "recordings", stamp);
       const s = rec.finalize(dir, num(c.flags, "max-frames", 40));
-      c.browser.recorder = undefined;
+      c.session.recorder = undefined;
       if (bool(c.flags, "close")) {
         const conn = await c.browser.connection();
         await c.browser.detach(rec.tab.targetId);
         await conn.send("Target.closeTarget", { targetId: rec.tab.targetId }).catch(() => {});
-        if (c.browser.currentTargetId === rec.tab.targetId) c.browser.currentTargetId = undefined;
+        if (c.session.currentTargetId === rec.tab.targetId) c.session.currentTargetId = undefined;
       }
       const lines = [
         `saved recording to ${dir}`,

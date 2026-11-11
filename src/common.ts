@@ -1,6 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { statSync } from "node:fs";
 
 export class CliError extends Error {
@@ -15,6 +16,7 @@ export type Flags = Record<string, string | boolean | string[]>;
 
 export interface Request {
   verb: string;
+  session: string;
   args: string[];
   flags: Flags;
   stamp: string;
@@ -54,6 +56,51 @@ export function buildStamp(): string {
   } catch {
     return "unknown";
   }
+}
+
+// Programs that sit between an agent and browsercli for a single command;
+// the session belongs to whatever launched them.
+const PASSTHROUGH = new Set([
+  "sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "pwsh", "nu",
+  "env", "timeout", "gtimeout", "nice", "nohup", "time", "xargs", "sudo", "script", "sandbox-exec",
+  "npm", "npx", "pnpm", "bun", "bunx", "yarn", "node",
+]);
+
+// Each caller gets its own selected tab and recording. Without an explicit
+// --session or $BROWSERCLI_SESSION, the session is the nearest ancestor that
+// isn't a shell or wrapper: the agent process (or terminal) issuing commands,
+// which outlives the per-command shells it spawns.
+export function sessionId(flag?: string): string {
+  if (flag) return flag;
+  if (process.env.BROWSERCLI_SESSION) return process.env.BROWSERCLI_SESSION;
+  return processSession() ?? "default";
+}
+
+function processSession(): string | undefined {
+  if (process.platform === "win32") return undefined;
+  let out: string;
+  try {
+    out = execFileSync("ps", ["-axo", "pid=,ppid=,lstart=,comm="], { encoding: "utf8", timeout: 2000 });
+  } catch {
+    return undefined;
+  }
+  const procs = new Map<number, { ppid: number; start: string; name: string }>();
+  for (const line of out.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+(.+)$/.exec(line);
+    if (m) procs.set(Number(m[1]), { ppid: Number(m[2]), start: m[3], name: basename(m[4].trim()).replace(/^-/, "") });
+  }
+  let pid = process.ppid;
+  for (let depth = 0; depth < 32 && pid > 1; depth++) {
+    const p = procs.get(pid);
+    if (!p) return undefined;
+    if (!PASSTHROUGH.has(p.name.toLowerCase())) {
+      // Start time guards against PID reuse.
+      const id = createHash("sha256").update(`${pid} ${p.start}`).digest("hex").slice(0, 6);
+      return `${p.name}-${pid}-${id}`;
+    }
+    pid = p.ppid;
+  }
+  return undefined;
 }
 
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

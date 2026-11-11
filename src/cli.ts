@@ -6,7 +6,7 @@ import { mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { HOME, LOG_PATH, SOCKET_PATH, buildStamp, sleep, type Flags, type Request, type Response } from "./common.js";
+import { HOME, LOG_PATH, SOCKET_PATH, buildStamp, sessionId, sleep, type Flags, type Request, type Response } from "./common.js";
 import { runDaemon } from "./daemon.js";
 
 const USAGE = `browsercli — control your real Chrome from the command line
@@ -48,12 +48,12 @@ Usage:
   browsercli tab list
   browsercli tab new [URL] [--window]
   browsercli tab switch ID
-  browsercli tab close [ID]
+  browsercli tab close [ID] [--force]
   browsercli connect [--port N | --ws URL | --user-data-dir DIR]
   browsercli disconnect | status
-  browsercli daemon stop|logs
+  browsercli daemon stop [--force]|logs
 
-Every command accepts --json for structured output.
+Every command accepts --json for structured output and --session NAME.
 
 Targeting:
   Commands act on the selected tab: the one last opened with \`open\`/\`tab new\`
@@ -62,6 +62,15 @@ Targeting:
   \`open URL\` navigates the selected tab, or opens a new background tab when
   none is selected (or with --new). New tabs open in the background and do not
   steal focus; only \`tab switch\` brings a tab to the front.
+
+Sessions:
+  Each caller has its own selected tab and recording, keyed by --session, else
+  $BROWSERCLI_SESSION, else the process running the commands (the nearest
+  ancestor that isn't a shell or wrapper, e.g. your agent or terminal). Agents
+  can't take over each other's tab, but they share the browser: \`tab list\`
+  marks tabs another session has selected with ~, and \`tab close\` refuses them
+  without --force. Several agents inside one process should each pass
+  --session NAME (or set $BROWSERCLI_SESSION).
 
 Refs:
   \`snapshot\` prints elements like \`[@e3] button "Submit"\`. Pass \`@e3\` or \`e3\`
@@ -83,7 +92,7 @@ Output:
 
 const BOOL_FLAGS = new Set([
   "json", "interactive-only", "diff", "double", "clear", "load", "full",
-  "secure", "http-only", "new", "window", "browser", "help", "close",
+  "secure", "http-only", "new", "window", "browser", "help", "close", "force",
 ]);
 const MULTI_FLAGS = new Set(["files"]);
 const PATH_FLAGS = new Set(["out", "user-data-dir"]);
@@ -222,7 +231,9 @@ async function main() {
 
   let res: Response;
   try {
-    res = await send({ verb, args, flags, stamp: buildStamp() });
+    const session = sessionId(typeof flags.session === "string" ? flags.session : undefined);
+    delete flags.session;
+    res = await send({ verb, args, flags, session, stamp: buildStamp() });
   } catch (e) {
     fail("daemon_error", (e as Error).message, json);
   }

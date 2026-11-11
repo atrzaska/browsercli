@@ -1,7 +1,7 @@
 # browsercli
 
 Control your **real Chrome** from the command line, using your own profile, logins and
-open tabs. It's built for AI agents (Claude Code and others) and handy for humans too.
+open tabs. It's built for AI agents and handy for humans too.
 It talks to Chrome directly over the [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/).
 It does not launch a separate browser or need a profile copy or an extension.
 
@@ -47,12 +47,16 @@ browsercli connect --user-data-dir "~/Library/Application Support/Google/Chrome 
 
 ## Using it with an agent
 
-Install the bundled skill so Claude Code knows the commands, the ref workflow and the
-safety rules:
+`SKILL.md` is an [Agent Skills](https://agentskills.io) file covering the commands, the
+ref workflow and the safety rules. Put it in your agent's skills directory as
+`browsercli/SKILL.md`, or symlink it so it stays up to date:
 
 ```sh
-mkdir -p ~/.claude/skills/browsercli && cp SKILL.md ~/.claude/skills/browsercli/
+mkdir -p <skills-dir>/browsercli && ln -sf "$PWD/SKILL.md" <skills-dir>/browsercli/SKILL.md
 ```
+
+Any agent that can run shell commands can use browsercli without the skill. `browsercli help`
+prints the full reference.
 
 ## Commands
 
@@ -100,6 +104,14 @@ window uncovered. Options: `--fps` (default 5), `--max-seconds` (default 120), `
 - **Explicit targeting.** Commands act on the tab you opened (`open` / `tab new`) or
   picked (`tab switch`), or on `--tab ID`. It never guesses from whichever tab you are
   looking at, so an agent can't stumble into your email by accident.
+- **Sessions.** Several agents can share one browser without colliding. Each caller has
+  its own selected tab and recording, keyed by `--session`, else `$BROWSERCLI_SESSION`,
+  else the process issuing the commands (the nearest ancestor that isn't a shell or a
+  wrapper like `timeout`/`npx`), so separate agent processes and terminals are isolated
+  automatically. Several agents running inside one process (e.g. a multi-agent gateway)
+  should each pass `--session NAME`. `tab list` marks tabs selected by other sessions with `~`,
+  `tab close` and `daemon stop` refuse to break another session's work without `--force`,
+  and a recording's timeline only includes its own session's commands.
 - **Doesn't steal focus.** New tabs open in the background. Chrome withholds trusted
   mouse input from background tabs, so there `click`/`hover`/`scroll` fall back to
   DOM-dispatched events, and the output tells you when that happened. `tab switch` brings
