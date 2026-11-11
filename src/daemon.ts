@@ -6,6 +6,28 @@ import { Browser } from "./browser.js";
 import { verbs } from "./commands.js";
 import { CliError, HOME, SOCKET_PATH, buildStamp, type Request, type Response } from "./common.js";
 
+// Commands worth showing on a recording's timeline.
+const RECORDED_VERBS = new Set([
+  "open", "back", "forward", "reload", "click", "hover", "focus", "clear", "check", "uncheck", "fill",
+  "fill-form", "press", "scroll", "select", "upload", "dialog", "eval", "wait", "resize",
+]);
+
+// Describes a command for the timeline without leaking typed values.
+function describeAction(req: Request, resultText = ""): string {
+  let args = req.args;
+  if (req.verb === "fill") args = [args[0], `(${(args[1] ?? "").length} chars)`];
+  else if (req.verb === "fill-form") {
+    try {
+      args = [`fields ${Object.keys(JSON.parse(args[0])).join(", ")}`];
+    } catch {}
+  }
+  const flags = Object.entries(req.flags)
+    .filter(([k]) => k !== "json")
+    .map(([k, v]) => (v === true ? `--${k}` : `--${k} ${v}`));
+  const outcome = resultText.split("\n").find((l) => l.startsWith("→"));
+  return [req.verb, ...args, ...flags].join(" ") + (outcome ? ` ${outcome}` : "");
+}
+
 function log(...args: unknown[]) {
   console.log(new Date().toISOString(), ...args);
 }
@@ -55,11 +77,18 @@ export async function runDaemon() {
     if (req.verb === "shutdown") return { res: { ok: true, text: "daemon stopped" }, exit: true };
     const h = verbs[req.verb];
     if (!h) return { res: { ok: false, error: { code: "unknown_verb", message: `unknown command "${req.verb}"; see \`browsercli help\`` } } };
+    const startedAt = Date.now();
     try {
       const out = await h({ browser, args: req.args, flags: req.flags });
+      if (browser.recorder?.active && RECORDED_VERBS.has(req.verb)) {
+        browser.recorder.action(describeAction(req, out.text), startedAt);
+      }
       return { res: { ok: true, ...out } };
     } catch (e) {
       const code = e instanceof CliError ? e.code : "internal_error";
+      if (browser.recorder?.active && RECORDED_VERBS.has(req.verb)) {
+        browser.recorder.action(`${describeAction(req)} → failed: ${code}`, startedAt);
+      }
       if (!(e instanceof CliError)) log(`${req.verb} failed:`, e);
       return { res: { ok: false, error: { code, message: (e as Error).message } } };
     }

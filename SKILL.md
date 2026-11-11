@@ -67,6 +67,22 @@ browsercli wait --fn "() => window.appReady"   # --timeout MS (default 30000)
 `cdp METHOD '{json}' [--browser]` (raw DevTools Protocol).
 Add `--json` to any command for structured output.
 
+## Recording a bug
+
+```sh
+browsercli record start https://app.example.com/cart   # new visible window, now the selected tab
+# ...reproduce with browsercli commands, or ask the user to reproduce it by hand...
+browsercli record stop --out ./bug-cart                 # --close to close the window
+```
+
+The output folder has `timeline.md` (start here), `timeline.json`, `frames/*.jpg`
+and `video.mp4` (for humans; needs ffmpeg). The timeline interleaves browsercli
+commands, in-page clicks/changes (never typed values), console errors, failed or
+4xx/5xx requests, navigations and dialogs with key frames. To analyze it, read
+`timeline.md`, then look at the frames just before and after the first error.
+Recording only works while the window is visible (not covered or minimized),
+and stops by itself after `--max-seconds` (default 120).
+
 ## Errors → recovery
 
 | code | do this |
@@ -75,6 +91,7 @@ Add `--json` to any command for structured output.
 | `stale_ref` | `browsercli snapshot` again and use the new refs |
 | `dialog_open` | `browsercli dialog` to read it, then `dialog accept` / `dialog dismiss` |
 | `not_visible` | scroll to it, close the overlay, or check `is --what visible --ref REF` |
+| `already_recording` / `not_recording` | `browsercli record status`, then `record stop` or `record start` |
 | `timeout` | page is slow or condition never met; snapshot to see the state |
 | `no_browser` | ask the user to enable chrome://inspect/#remote-debugging ("Allow remote debugging") |
 | `connect_failed` / `connect_timeout` | ask the user to click **Allow** on Chrome's remote-debugging prompt |

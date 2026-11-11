@@ -1,4 +1,4 @@
-<!doctype html><html><head><title>Test Page</title></head><body>
+<!doctype html><html><head><meta charset="utf-8"><title>Test Page</title></head><body>
 <h1>Hello browsercli</h1>
 <form id="f" onsubmit="event.preventDefault(); document.getElementById('out').textContent = 'submitted:' + new FormData(this).get('name') + ':' + new FormData(this).get('agree') + ':' + new FormData(this).get('color')">
   <label>Name <input name="name" id="name"></label>
@@ -12,6 +12,18 @@
 <button aria-label="Close dialog"><span>X</span></button>
 <button onclick="alert('hi there')">Alert me</button>
 <button onclick="setTimeout(()=>{const d=document.createElement('div');d.id='late';d.textContent='Late content';document.body.append(d)},500)">Delayed</button>
+<button onclick="console.error('boom: cart total is NaN'); fetch('/api/missing'); document.getElementById('out').textContent = 'broken!'">Break things</button>
 <input type="file" id="file">
+<div id="emoji-editor" contenteditable="true" role="textbox" aria-label="Emoji editor"></div>
+<div id="stubborn-editor" contenteditable="true" role="textbox" aria-label="Stubborn editor"></div>
+<script>
+  // Mimics Slack-style editors that render emoji as images.
+  document.getElementById('emoji-editor').addEventListener('input', (e) => {
+    const el = e.target;
+    if (el.textContent.includes('🤖')) el.innerHTML = el.textContent.replace('🤖', '<img alt=":robot_face:" src="data:,">');
+  });
+  // An editor that rejects typed input.
+  document.getElementById('stubborn-editor').addEventListener('beforeinput', (e) => e.preventDefault());
+</script>
 <script>console.log('page loaded', {a:1}); console.warn('careful')</script>
 </body></html>

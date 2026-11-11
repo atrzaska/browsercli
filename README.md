@@ -66,11 +66,34 @@ Run `browsercli help` for the full list. The essentials:
 | Wait | `wait --text T \| --selector S \| --url U \| --load \| --fn JS [--state hidden] [--timeout MS]` |
 | Capture | `screenshot [--out P] [--ref REF] [--full]`, `pdf [--out P]` |
 | Debug | `console`, `network`, `eval JS`, `cdp METHOD [JSON]` |
+| Record | `record start [URL]`, `record stop [--out DIR] [--close]`, `record status` |
 | State | `cookies get\|set\|delete`, `storage get\|set\|clear` |
 | Tabs | `tab list`, `tab new [URL]`, `tab switch ID`, `tab close [ID]` |
 | Daemon | `status`, `connect`, `disconnect`, `daemon stop`, `daemon logs` |
 
 Every command accepts `--json`.
+
+### Recording bugs
+
+```sh
+browsercli record start localhost:3000/checkout   # opens a separate window and starts recording
+# reproduce the bug by hand, or let an agent drive it with browsercli commands
+browsercli record stop --out ./bug-123
+```
+
+```
+bug-123/
+  timeline.md     # what happened when: commands, clicks, console errors, failed requests, navigations
+  timeline.json   # same, structured
+  frames/         # key frames around each event and visual change (≤ 40, --max-frames)
+  video.mp4       # for humans (requires ffmpeg)
+```
+
+AI models read images and text, not video, so the key frames and timeline are what you
+give an agent: "at 00:04 the click on Submit produced a 500 on /api/order, and the frame
+after it shows a stuck spinner". The recording shows your clicks and form changes
+but never what you typed. Chrome only paints visible windows, so keep the recording
+window uncovered. Options: `--fps` (default 5), `--max-seconds` (default 120), `--size 1280x800`.
 
 ### How it behaves
 

@@ -5,6 +5,7 @@ import { CDPConnection, DEFAULT_CALL_TIMEOUT, type CDPEvent, type Method, type P
 import { readFileSync, writeFileSync } from "node:fs";
 import { CliError, STATE_PATH } from "./common.js";
 import { discoverEndpoint, type ConnectOpts } from "./discover.js";
+import type { Recorder } from "./recorder.js";
 
 const BUFFER_LIMIT = 1000;
 const CONNECT_TIMEOUT = 60_000;
@@ -191,6 +192,7 @@ interface PersistedState {
 
 export class Browser {
   endpoint?: string;
+  recorder?: Recorder;
   // Survives daemon restarts (e.g. after an upgrade).
   private state: PersistedState = { opts: {} };
   private conn?: CDPConnection;

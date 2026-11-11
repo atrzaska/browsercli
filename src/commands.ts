@@ -1,9 +1,11 @@
 // Verb implementations executed inside the daemon.
+import { join } from "node:path";
 import type { Protocol } from "devtools-protocol";
 import { Browser, formatRemote, shortId, type Tab } from "./browser.js";
 import type { CDPEvent } from "./cdp.js";
-import { CliError, sleep, untrusted, type Capture, type Flags } from "./common.js";
+import { CliError, HOME, sleep, untrusted, type Capture, type Flags } from "./common.js";
 import { pressCombo } from "./keys.js";
+import { Recorder } from "./recorder.js";
 import { diffLines, findNodes, renderSnapshot } from "./snapshot.js";
 
 export interface Ctx {
@@ -396,11 +398,40 @@ async function fillElement(tab: Tab, objectId: string, value: string): Promise<s
   await callOn(tab, objectId, CLEAR_FN);
   if (value) await tab.send("Input.insertText", { text: value });
   await callOn(tab, objectId, `function() { this.dispatchEvent(new Event("change", { bubbles: true })); }`);
-  // Rich-text editors render emoji/mentions as elements, so their text can't
-  // be compared; only plain inputs are verified.
-  if (kind !== "text") return "filled";
-  const actual = await callOn<string>(tab, objectId, `function() { return this.value; }`);
-  return actual === value ? "filled" : `filled (field now contains ${JSON.stringify(actual)})`;
+  if (kind === "text") {
+    const actual = await callOn<string>(tab, objectId, `function() { return this.value; }`);
+    return actual === value ? "filled" : `filled (field now contains ${JSON.stringify(actual)})`;
+  }
+  // Rich-text editors may turn emoji into images or add trailing content, so
+  // only check that the typed text (minus emoji) made it in.
+  const actual = await callOn<string>(tab, objectId, READ_EDITABLE_FN);
+  return comparableText(actual).includes(comparableText(value))
+    ? "filled"
+    : `filled, but the editor now contains ${JSON.stringify(actual.trim())}`;
+}
+
+// Editor text as rendered: images count as their alt text, blocks as newlines.
+const READ_EDITABLE_FN = `function() {
+  const parts = [];
+  const walk = (n) => {
+    if (n.nodeType === Node.TEXT_NODE) return void parts.push(n.data);
+    if (n.nodeType !== Node.ELEMENT_NODE) return;
+    if (n.tagName === "IMG") return void parts.push(n.alt || n.getAttribute("aria-label") || "");
+    if (n.tagName === "BR") return void parts.push("\\n");
+    for (const c of n.childNodes) walk(c);
+    if (/^(P|DIV|LI)$/.test(n.tagName)) parts.push("\\n");
+  };
+  walk(this);
+  return parts.join("");
+}`;
+
+// Drops emoji (as characters or :shortcodes:) and normalizes whitespace.
+function comparableText(s: string): string {
+  return s
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u200d\ufe0f]/gu, "")
+    .replace(/:[a-z0-9_+-]+:/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function setChecked(tab: Tab, objectId: string, want: boolean) {
@@ -937,6 +968,82 @@ export const verbs: Record<string, Handler> = {
     await conn.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
     await conn.send("Browser.setWindowBounds", { windowId, bounds: { width, height } });
     return { text: `resized window to ${width}x${height}` };
+  },
+
+  async record(c) {
+    const sub = c.args[0] ?? "status";
+    const rec = c.browser.recorder;
+    if (sub === "start") {
+      if (rec) {
+        throw new CliError("already_recording", `already recording tab ${shortId(rec.tab.targetId)}; run \`browsercli record stop\` first`);
+      }
+      let url = c.args[1] ?? str(c.flags, "url");
+      if (!url && c.browser.currentTargetId) {
+        const cur = await c.browser.tab(await c.browser.resolveTarget()).catch(() => undefined);
+        if (cur) url = (await pageInfo(cur)).url;
+      }
+      url = normalizeUrl(url || "about:blank");
+      // A separate, visible window: Chrome doesn't paint background tabs.
+      const conn = await c.browser.connection();
+      const { targetId } = await conn.send("Target.createTarget", { url, newWindow: true });
+      c.browser.currentTargetId = targetId;
+      const tab = await c.browser.tab(targetId);
+      const size = str(c.flags, "size");
+      if (size) {
+        const [width, height] = size.split("x").map(Number);
+        if (!(width > 0 && height > 0)) throw new CliError("bad_args", "--size must look like 1280x800");
+        const { windowId } = await conn.send("Browser.getWindowForTarget", { targetId });
+        await conn.send("Browser.setWindowBounds", { windowId, bounds: { width, height } });
+      }
+      await waitForInitialLoad(tab, url, num(c.flags, "timeout", DEFAULT_WAIT_TIMEOUT));
+      const maxSeconds = num(c.flags, "max-seconds", 120);
+      const recorder = new Recorder(tab, {
+        fps: Math.min(30, Math.max(1, num(c.flags, "fps", 5))),
+        maxSeconds,
+        rawDir: join(HOME, "recordings", `.raw-${Date.now()}`),
+      });
+      await recorder.start();
+      c.browser.recorder = recorder;
+      return {
+        text:
+          `recording tab ${shortId(targetId)} in a new window (now selected): ${(await pageInfo(tab)).url}\n` +
+          "Reproduce the issue (by hand or with browsercli commands), then run `browsercli record stop [--out DIR]`.\n" +
+          `Keep the window visible: Chrome doesn't paint covered or minimized windows. Auto-stops after ${maxSeconds}s.`,
+        data: { id: shortId(targetId), targetId },
+      };
+    }
+    if (sub === "stop") {
+      if (!rec) throw new CliError("not_recording", "no recording in progress; start one with `browsercli record start [URL]`");
+      await rec.halt();
+      const stamp = new Date(rec.startedAt).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const dir = str(c.flags, "out") ?? join(HOME, "recordings", stamp);
+      const s = rec.finalize(dir, num(c.flags, "max-frames", 40));
+      c.browser.recorder = undefined;
+      if (bool(c.flags, "close")) {
+        const conn = await c.browser.connection();
+        await c.browser.detach(rec.tab.targetId);
+        await conn.send("Target.closeTarget", { targetId: rec.tab.targetId }).catch(() => {});
+        if (c.browser.currentTargetId === rec.tab.targetId) c.browser.currentTargetId = undefined;
+      }
+      const lines = [
+        `saved recording to ${dir}`,
+        `  timeline.md   ${s.events} events (${s.errors} errors), ${(s.durationMs / 1000).toFixed(1)}s`,
+        `  frames/       ${s.keyFrames.length} key frames (of ${s.capturedFrames} captured)`,
+        s.video ? `  video.mp4` : `  no video: ${s.videoError ?? "no frames captured"}`,
+      ];
+      if (!s.capturedFrames) lines.push("no frames were captured: keep the recording window visible (not covered or minimized)");
+      return { text: lines.join("\n"), data: s };
+    }
+    if (sub === "status") {
+      if (!rec) return { text: "not recording", data: null };
+      const secs = ((rec.stoppedAt ?? Date.now()) - rec.startedAt) / 1000;
+      const state = rec.active ? "recording" : `stopped (${rec.stopReason}), run \`browsercli record stop\` to save`;
+      return {
+        text: `${state}: tab ${shortId(rec.tab.targetId)}, ${secs.toFixed(1)}s, ${rec.frames.length} frames, ${rec.events.length} events`,
+        data: { active: rec.active, seconds: secs, frames: rec.frames.length, events: rec.events.length },
+      };
+    }
+    throw new CliError("bad_args", "usage: browsercli record start [URL] | stop [--out DIR] | status");
   },
 
   async cdp(c) {

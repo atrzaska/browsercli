@@ -3,7 +3,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -107,6 +107,15 @@ test("forms, refs, navigation", async () => {
   assert.equal(await b("get", "--what", "title"), "<untrusted-page-content>\nTest Page\n</untrusted-page-content>");
 });
 
+test("fill verifies rich-text editors by text, ignoring emoji", async () => {
+  const snap = await b("snapshot", "--interactive-only");
+  const emoji = refOf(snap, 'textbox "Emoji editor"');
+  const stubborn = refOf(snap, 'textbox "Stubborn editor"');
+  assert.equal(await b("fill", emoji, "hello from browsercli 🤖"), `${emoji}: filled`);
+  assert.match(await b("eval", "document.getElementById('emoji-editor').innerHTML"), /<img alt=":robot_face:"/);
+  assert.match(await b("fill", stubborn, "you shall not pass"), /filled, but the editor now contains ""/);
+});
+
 test("dialogs do not hang", async () => {
   const snap = await b("snapshot", "--interactive-only");
   const alertBtn = refOf(snap, 'button "Alert me"');
@@ -126,6 +135,34 @@ test("wait, find, eval, console, capture", async () => {
   const shot = JSON.parse(await b("screenshot", "--json"));
   assert.ok(existsSync(shot.path));
   assert.equal(readFileSync(shot.path).subarray(1, 4).toString(), "PNG");
+});
+
+test("record: frames, timeline, video", async () => {
+  const outDir = join(home, "rec");
+  assert.match(await b("record", "start", `${base}/index.html`, "--fps", "10"), /recording tab/);
+  assert.match(await bFails("record", "start"), /already_recording/);
+  const snap = await b("snapshot", "--interactive-only");
+  await b("fill", refOf(snap, 'textbox "Name"'), "secret-value");
+  await b("click", refOf(snap, 'button "Break things"'));
+  await b("wait", "--text", "broken!");
+  await new Promise((r) => setTimeout(r, 700));
+  assert.match(await b("record", "status"), /^recording/);
+  assert.match(await b("record", "stop", "--out", outDir, "--close"), /saved recording/);
+
+  const md = readFileSync(join(outDir, "timeline.md"), "utf8");
+  assert.match(md, /\*\*browsercli\*\* fill e\d+ \(12 chars\)/);
+  assert.doesNotMatch(md, /secret-value/);
+  assert.match(md, /\*\*page\*\* click on button "Break things"/);
+  assert.match(md, /\*\*console\.error\*\* boom: cart total is NaN/);
+  assert.match(md, /\*\*network\*\* 404 GET .*\/api\/missing/);
+  const timeline = JSON.parse(readFileSync(join(outDir, "timeline.json"), "utf8"));
+  assert.ok(timeline.frames.length >= 2, "expected key frames");
+  for (const f of timeline.frames) assert.ok(existsSync(join(outDir, f.file)), f.file);
+  // The click is stamped before the error it caused.
+  const at = (re) => timeline.events.find((e) => re.test(e.text)).ms;
+  assert.ok(at(/^click /) <= at(/boom/));
+  if (timeline.video) assert.ok(statSync(join(outDir, "video.mp4")).size > 1000);
+  assert.match(await bFails("record", "stop"), /not_recording/);
 });
 
 test("tabs", async () => {
