@@ -64,7 +64,7 @@ Run `browsercli help` for the full list. The essentials:
 
 | | |
 |---|---|
-| Navigate | `open URL [--tab ID] [--new]`, `back`, `forward`, `reload` |
+| Navigate | `open URL [--tab ID] [--new \| --window]`, `back`, `forward`, `reload` |
 | Read | `snapshot [--interactive-only] [--depth N] [--scope REF] [--diff]`, `text`, `find QUERY [--by text\|role]`, `get --what …`, `is --what …` |
 | Act | `click REF [--double]`, `fill REF VALUE`, `fill-form JSON`, `press KEY`, `select REF VALUE…`, `check`/`uncheck`, `hover`, `focus`, `clear`, `scroll`, `upload REF --files …` |
 | Wait | `wait --text T \| --selector S \| --url U \| --load \| --fn JS [--state hidden] [--timeout MS]` |
@@ -72,7 +72,7 @@ Run `browsercli help` for the full list. The essentials:
 | Debug | `console`, `network`, `eval JS`, `cdp METHOD [JSON]` |
 | Record | `record start [URL]`, `record stop [--out DIR] [--close]`, `record status` |
 | State | `cookies get\|set\|delete`, `storage get\|set\|clear` |
-| Tabs | `tab list`, `tab new [URL]`, `tab switch ID`, `tab close [ID]` |
+| Tabs | `tab list`, `tab new [URL] [--window]`, `tab switch ID`, `tab close [ID]` |
 | Daemon | `status`, `connect`, `disconnect`, `daemon stop`, `daemon logs` |
 
 Every command accepts `--json`.

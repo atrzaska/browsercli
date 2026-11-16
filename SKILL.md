@@ -50,7 +50,9 @@ Nothing is guessed from what the user is looking at.
 - Other agents may be using the same browser at the same time: in `tab list`, `~`
   marks tabs another session has selected. Leave those alone unless the user asks.
 - `open URL` navigates the selected tab. It opens a new background tab if none
-  is selected. Use `open URL --new` to always get a new tab.
+  is selected. Use `open URL --new` to always get a new tab, or `open URL --window`
+  for a new tab in its own browser window, so your work stays out of the user's
+  windows. `tab close` on a window's only tab closes the window.
 - `tab new URL` / `tab close [ID]` manage tabs. `tab switch ID` also brings the tab to the front.
 - New tabs open in the background so the user's focus is not stolen. In a
   background tab, `click`/`hover`/`scroll` use DOM-dispatched events (output

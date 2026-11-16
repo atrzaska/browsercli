@@ -210,6 +210,22 @@ test("sessions: agents don't share a selected tab", async () => {
   await alice("tab", "close", aliceTab);
 });
 
+test("open --window opens a tab in its own window", async () => {
+  const windowOf = async (targetId) =>
+    JSON.parse(await b("cdp", "Browser.getWindowForTarget", JSON.stringify({ targetId }), "--browser", "--json")).data.windowId;
+
+  const first = JSON.parse(await b("open", `${base}/page2.html`, "--new", "--json")).data;
+  const opened = await b("open", `${base}/page2.html`, "--window", "--json");
+  const second = JSON.parse(opened).data;
+
+  assert.equal(second.window, true);
+  assert.notEqual(await windowOf(second.targetId), await windowOf(first.targetId));
+  assert.ok(JSON.parse(await b("tab", "list", "--json")).data.find((t) => t.id === second.id && t.current));
+
+  await b("tab", "close", second.id);
+  await b("tab", "close", first.id);
+});
+
 test("tabs", async () => {
   const opened = await b("tab", "new", `${base}/page2.html`, "--json");
   const { id } = JSON.parse(opened).data;

@@ -16,7 +16,7 @@ Setup (once): open chrome://inspect/#remote-debugging in Chrome and enable
 Or launch Chrome with --remote-debugging-port=9222 and run \`browsercli connect --port 9222\`.
 
 Usage:
-  browsercli open URL [--tab ID] [--new]
+  browsercli open URL [--tab ID] [--new | --window]
   browsercli back|forward|reload [--tab ID]
   browsercli snapshot [--interactive-only] [--depth N] [--scope REF|SELECTOR] [--diff] [--tab ID]
   browsercli text [--tab ID]
@@ -60,8 +60,9 @@ Targeting:
   or chosen with \`tab switch\`. Pass --tab ID (from \`tab list\`, any unique
   prefix) to target another tab. Nothing is ever guessed from UI focus.
   \`open URL\` navigates the selected tab, or opens a new background tab when
-  none is selected (or with --new). New tabs open in the background and do not
-  steal focus; only \`tab switch\` brings a tab to the front.
+  none is selected (or with --new). --window opens it in a new browser window
+  instead, leaving the user's windows alone. New tabs and windows open in the
+  background and do not steal focus; only \`tab switch\` brings a tab to the front.
 
 Sessions:
   Each caller has its own selected tab and recording, keyed by --session, else

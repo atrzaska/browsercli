@@ -489,8 +489,8 @@ const tabVerbs: Record<string, Handler> = {
     await waitForInitialLoad(tab, url, num(c.flags, "timeout", DEFAULT_WAIT_TIMEOUT));
     const info = await pageInfo(tab);
     return {
-      text: `opened tab ${shortId(targetId)} (now selected): ${info.url} — ${JSON.stringify(info.title)}`,
-      data: { id: shortId(targetId), targetId, ...info },
+      text: `opened tab ${shortId(targetId)}${bool(c.flags, "window") ? " in a new window" : ""} (now selected): ${info.url} — ${JSON.stringify(info.title)}`,
+      data: { id: shortId(targetId), targetId, window: bool(c.flags, "window"), ...info },
     };
   },
 
@@ -578,7 +578,7 @@ export const verbs: Record<string, Handler> = {
   async open(c) {
     const url = normalizeUrl(arg(c, 0, "URL"));
     const tabFlag = str(c.flags, "tab");
-    if (bool(c.flags, "new") || (!tabFlag && !c.session.currentTargetId)) {
+    if (bool(c.flags, "new") || bool(c.flags, "window") || (!tabFlag && !c.session.currentTargetId)) {
       return tabVerbs.new({ ...c, args: ["new", url] });
     }
     const tab = await getTab(c);
