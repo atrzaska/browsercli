@@ -20,7 +20,7 @@ $ browsercli fill @e15 "chrome devtools protocol" && browsercli press Enter
 Requires Node.js ≥ 22.4 and Chrome 144+ (or any Chromium browser).
 
 ```sh
-npm install -g browsercli
+npm install -g @atrzaska/browsercli
 ```
 
 Or from a checkout:
