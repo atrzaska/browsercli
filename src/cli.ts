@@ -207,13 +207,13 @@ async function main() {
   const { positional, flags } = parseArgs(argv);
   const json = flags.json === true;
   let [verb, ...args] = positional;
-  if (!verb || verb === "help" || flags.help) {
-    console.log(USAGE);
-    return;
-  }
   if (verb === "version" || flags.version) {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     console.log(pkg.version);
+    return;
+  }
+  if (!verb || verb === "help" || flags.help) {
+    console.log(USAGE);
     return;
   }
   if (verb === "daemon") {
