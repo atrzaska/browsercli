@@ -156,3 +156,7 @@ default location.
 - Snapshots cover the main frame. Cross-origin iframe contents aren't included yet.
 - `pdf` depends on Chrome supporting `Page.printToPDF` for the page.
 - `resize` resizes the browser window (not an emulated viewport).
+
+## License
+
+[MIT](LICENSE)
