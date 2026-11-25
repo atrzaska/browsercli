@@ -1,5 +1,9 @@
 # browsercli
 
+[![npm](https://img.shields.io/npm/v/%40atrzaska%2Fbrowsercli?label=npm)](https://www.npmjs.com/package/@atrzaska/browsercli)
+[![CI](https://github.com/atrzaska/browsercli/actions/workflows/ci.yml/badge.svg)](https://github.com/atrzaska/browsercli/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Control your **real Chrome** from the command line, using your own profile, logins and
 open tabs. It's built for AI agents and handy for humans too.
 It talks to Chrome directly over the [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/).
@@ -20,7 +24,7 @@ $ browsercli fill @e15 "chrome devtools protocol" && browsercli press Enter
 Requires Node.js ≥ 22.4 and Chrome 144+ (or any Chromium browser).
 
 ```sh
-npm install -g @atrzaska/browsercli
+npm install -g @atrzaska/browsercli   # https://www.npmjs.com/package/@atrzaska/browsercli
 ```
 
 Or from a checkout:
