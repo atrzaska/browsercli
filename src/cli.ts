@@ -93,7 +93,7 @@ Output:
 
 const BOOL_FLAGS = new Set([
   "json", "interactive-only", "diff", "double", "clear", "load", "full",
-  "secure", "http-only", "new", "window", "browser", "help", "close", "force",
+  "secure", "http-only", "new", "window", "browser", "help", "close", "force", "version",
 ]);
 const MULTI_FLAGS = new Set(["files"]);
 const PATH_FLAGS = new Set(["out", "user-data-dir"]);
@@ -211,7 +211,7 @@ async function main() {
     console.log(USAGE);
     return;
   }
-  if (verb === "version" || verb === "--version") {
+  if (verb === "version" || flags.version) {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     console.log(pkg.version);
     return;
