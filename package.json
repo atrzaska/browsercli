@@ -1,6 +1,6 @@
 {
   "name": "@atrzaska/browsercli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Control your real Chrome browser from the command line (for humans and AI agents) via the Chrome DevTools Protocol",
   "author": "Andrzej Trzaska",
   "license": "MIT",
