@@ -70,8 +70,16 @@ before(async () => {
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${server.address().port}`;
-  chrome = spawn(chromePath, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "about:blank"], { stdio: "ignore" });
-  for (let i = 0; i < 100 && !existsSync(join(profile, "DevToolsActivePort")); i++) await new Promise((r) => setTimeout(r, 100));
+  const flags = ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "about:blank"];
+  // CI runners have no GPU, a small /dev/shm and sometimes no user namespaces for the sandbox.
+  if (process.env.CI) flags.push("--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage");
+  chrome = spawn(chromePath, flags, { stdio: ["ignore", "ignore", "pipe"] });
+  let chromeErr = "";
+  chrome.stderr.on("data", (d) => (chromeErr += d));
+  let exited = false;
+  chrome.on("exit", (code) => (exited = true, chromeErr += `\nChrome exited with code ${code}`));
+  for (let i = 0; i < 300 && !exited && !existsSync(join(profile, "DevToolsActivePort")); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(existsSync(join(profile, "DevToolsActivePort")), `Chrome did not start (${chromePath}):\n${chromeErr}`);
   await b("connect", "--user-data-dir", profile);
 });
 
